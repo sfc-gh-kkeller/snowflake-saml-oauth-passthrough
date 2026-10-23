@@ -1,0 +1,213 @@
+# NanoCortex Web Agent Configuration
+# ====================================
+# Copy this file to config.toml and fill in your credentials.
+# All settings can be overridden by environment variables with AFE_ prefix.
+# e.g. [snowflake].account -> AFE_SNOWFLAKE_ACCOUNT
+
+[app]
+# Application identity and branding
+name = "nanocortex-web-agent"
+debug = false
+dev_mode = true
+mode = "chat"                           # "chat" | "tiled"
+title = "Acme Insurance"
+subtitle = "Policy & Claims Knowledge Agent"
+logo_icon = "🛡"
+quick_questions = "What does my homeowners policy cover for water damage?,How do I file an auto claim after an accident?,Explain the difference between term and whole life insurance,What is a deductible and how does it affect my premium?,How does umbrella insurance work?,What's covered under a standard renters policy?"
+seed_topics = "auto:liability collision comprehensive uninsured-motorist deductibles premiums;home:dwelling personal-property liability water-damage flood earthquake;life:term whole universal beneficiaries riders cash-value;health:HMO PPO deductible copay coinsurance out-of-pocket-max;claims:FNOL adjuster estimate subrogation settlement;underwriting:risk-assessment actuarial loss-history credit-score;billing:premium-payment grace-period lapse reinstatement;policy:declarations endorsements exclusions limits coverage;commercial:general-liability workers-comp BOP property cyber;regulatory:state-DOI compliance NAIC market-conduct"
+allowed_email_domain = ""               # Empty = allow all domains
+
+[database]
+# Database backend: "postgres" (default) or "snowflake"
+backend = "postgres"                    # "postgres" | "snowflake"
+# PostgreSQL connection strings (used when backend = "postgres")
+url = "postgresql+asyncpg://localhost/nanocortex"
+url_sync = "postgresql://localhost/nanocortex"
+
+[auth]
+# JWT signing key — CHANGE THIS IN PRODUCTION
+secret_key = "change-me-in-production"
+access_token_expire_minutes = 10080     # 7 days
+mode = "password"                       # "password" | "magic_link"
+allow_registration = true               # Allow new user self-registration
+
+[snowflake]
+# Snowflake account credentials for the Cortex Agent API
+account = ""                            # e.g. "MYORG-MYACCOUNT"
+user = ""                               # e.g. "user@company.com"
+pat = ""                                # Programmatic Access Token (PAT)
+warehouse = "SMALL"
+role = "ACCOUNTADMIN"
+database = ""
+schema = ""
+
+[agent]
+# Cortex Agent configuration
+provider = "cortex"                     # "cortex" | "openai" | "anthropic" | "ollama"
+model = "auto"                          # LLM model name or "auto"
+max_steps = 15                          # Max tool-use loop iterations per request
+thinking_effort = "medium"              # "low" | "medium" | "high"
+reflect = true                          # Enable self-correction after each response
+max_reflect = 2                         # Max reflection iterations
+
+# System prompt — defines agent behavior for workspace, wizards, and skill loading.
+# Edit this to customize how the agent operates. This is appended after skill content.
+system_prompt = """
+## Clarification Wizard
+
+When you need to ask the user clarifying questions before you can proceed, embed a wizard block in your response using this exact format:
+
+```
+<!-- WIZARD
+{"questions": [
+  {"id": "q1", "question": "Your question here?", "options": ["Option A", "Option B", "Option C"]},
+  {"id": "q2", "question": "Another question?", "options": ["Yes", "No"]}
+]}
+-->
+```
+
+Rules:
+- Use 1-4 questions max per wizard block
+- Provide 2-5 concrete options per question
+- Put the wizard block at the END of your message (after any explanatory text)
+- The user will see clickable buttons for each option and can also type a custom answer
+- Only use a wizard when you genuinely need clarification to proceed
+
+## Workspace Document
+
+Every conversation automatically creates a workspace document (markdown asset) from your first response. This document is the deliverable that the user will review, iterate on, and eventually submit for approval or send to a customer.
+
+When the user asks you to update, edit, revise, add to, or improve the document (or any section of it), output the COMPLETE updated document wrapped in:
+
+```
+<!-- WORKSPACE_UPDATE -->
+(full updated markdown content here)
+<!-- /WORKSPACE_UPDATE -->
+```
+
+Rules:
+- Always output the FULL document, not just the changed section
+- You may include explanatory text before or after the WORKSPACE_UPDATE block
+- The document in the workspace is the canonical version — always base edits on it
+- When the workspace document is shown in `<workspace_content>` tags in your context, that is the current version to work from
+- If the user gives instructions about content changes without explicitly saying 'update the document', still apply the changes via WORKSPACE_UPDATE if the intent is clearly to modify the deliverable
+
+## Dynamic Skill Loading
+
+You have access to companion skills that provide specialized SQL patterns and domain knowledge. To load a skill for deeper domain knowledge, include this marker in your response:
+
+```
+<!-- LOAD_SKILL: skill-name -->
+```
+
+The skill content will be available in your next response in this conversation. Use this when:
+- The user's question requires specialized SQL patterns you don't have in context
+- You need domain-specific implementation details (e.g., trust-center for CIS benchmarks)
+- The conversation pivots to a topic covered by a companion skill
+- You can load multiple skills by including multiple LOAD_SKILL markers
+- A loaded skill references another skill — load it to get the full context
+
+Skills can reference other skills. If a loaded skill says to 'invoke' or 'use' another skill (e.g., 'invoke the trust-center skill'), load that skill with LOAD_SKILL in your response. On the next turn you'll have both skills available.
+
+Sub-skills can be loaded with a path: `<!-- LOAD_SKILL: skill-name/sub-skill-name -->`
+
+If a skill instructs you to ask the user clarifying questions, use the WIZARD block format (defined above) to present those questions as interactive choices.
+"""
+
+[embeddings]
+# Embedding configuration for semantic search
+provider = "snowflake"                  # "snowflake" | "openai" | "ollama" | "none"
+model = "snowflake-arctic-embed-l-v2.0" # Snowflake embedding model
+model_openai = "text-embedding-3-small"  # OpenAI embedding model
+model_ollama = "nomic-embed-text"        # Ollama embedding model
+dimensions = 1024
+similarity_threshold = 0.70
+
+[openai]
+# OpenAI API configuration (used when agent.provider = "openai")
+api_key = ""
+base_url = "https://api.openai.com/v1"  # Change for Azure OpenAI or compatible APIs
+model = "gpt-4o"
+
+[anthropic]
+# Anthropic API configuration (used when agent.provider = "anthropic")
+api_key = ""
+model = "claude-sonnet-4-20250514"
+
+[ollama]
+# Ollama configuration (used when agent.provider = "ollama")
+base_url = "http://localhost:11434"
+model = "llama3.1"
+
+[assets]
+# Asset lifecycle
+ttl_days = 30                           # Days before approved assets expire
+
+[files]
+# File upload limits
+max_per_message = 10
+max_size_mb = 5
+max_user_files = 10
+allowed_types = "image/png,image/jpeg,image/gif,image/webp,application/pdf"
+upload_dir = "uploads"
+
+[zettel]
+# Zettelkasten memory system
+provider = "snowflake"                  # "snowflake" | "local"
+max_zettels = 2000
+persist_dir = "data/zettel"
+connection_threshold = 0.25
+
+[github]
+# GitHub backup for approved assets
+enabled = false
+repo = ""                               # e.g. "org/repo-name"
+token = ""                              # GitHub personal access token
+branch = "main"
+backup_interval_hours = 6
+expiry_backup_days = 3
+
+[smtp]
+# Email configuration for magic link authentication
+host = ""                               # e.g. "smtp.gmail.com"
+port = 587
+user = ""                               # SMTP username
+password = ""                           # SMTP password
+from_email = ""                         # e.g. "noreply@yourapp.com"
+magic_link_expire_minutes = 180
+magic_link_base_url = "http://localhost:9000"  # Your app's public URL
+
+[oauth]
+# OAuth base URL for callback redirects
+base_url = "http://localhost:9000"
+
+# ---------------------------------------------------------------------------
+# SAML -> Entra OIDC -> Snowflake per-user passthrough
+# setup/entra_setup.sh writes the values below to setup/entra.env;
+# setup/render_config.sh merges them into config/config.toml.
+# ---------------------------------------------------------------------------
+
+[saml]
+enabled = false
+idp_metadata_url = ""                   # https://login.microsoftonline.com/<tenant>/federationmetadata/2007-06/federationmetadata.xml?appid=<web app id>
+sp_entity_id = ""                       # api://<web app id>
+
+[entra]
+tenant_id = ""
+client_id = ""                          # web app (SAML SP + confidential OIDC client)
+client_secret = ""
+# Recommended: role-scoped v2 resource, e.g.
+#   "api://<res-v2>/session:role:APP_ANALYST api://<res-v2>/session:role:APP_READER"
+# Fallback: "api://<res-v1>/session:role-any"
+snowflake_scope = ""
+domain_hint = ""                        # e.g. contoso.onmicrosoft.com
+
+[snowflake_oauth]
+enabled = false
+allowed_roles = "APP_ANALYST,APP_READER" # backend allowlist (Snowflake integration allowlist is the hard cap)
+default_role = "APP_ANALYST"
+warehouse = "SSO_DEMO_WH"
+# true  -> wrap queries in USE SECONDARY ROLES NONE (needed for role-any tokens)
+# false -> role-scoped tokens: Snowflake disables secondary roles itself
+disable_secondary_roles = false
+token_encryption_key = ""               # Fernet key; python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"

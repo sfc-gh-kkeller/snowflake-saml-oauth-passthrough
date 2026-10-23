@@ -1,0 +1,177 @@
+# Snowflake SAML → OAuth User Passthrough (Entra ID)
+
+Your web app signs users in with **SAML** (Entra ID). This repo shows how it can then call **Snowflake as that user**, with:
+- no extra login prompt;
+- per-user RBAC and audit;
+- Snowflake, not your app code, enforcing which roles the app may use.
+
+It contains:
+- **[`docs/GUIDE.md`](docs/GUIDE.md)**: the design guide (flow, token model, role control, backstops, alternatives);
+- **[`app/`](app/)**: a working reference app (FastAPI + Preact). It covers the SAML SP, the silent OIDC hop, an encrypted per-user token store, SQL API / REST / Cortex Agent calls as the user, and a *Role Check* page that proves which roles are actually active;
+- **[`setup/`](setup/)**: idempotent scripts that provision the Entra app registrations and the Snowflake integrations, roles and demo data.
+
+> Community sample, not an official Snowflake product. Review it before using anything in production.
+
+---
+
+## The problem
+
+- A SAML assertion **can't be exchanged** for an OAuth token in Entra ID. The app has nothing it can hand to Snowflake.
+- The usual shortcut, a `session:role-any` token, has a trap. `EXTERNAL_OAUTH_ALLOWED_ROLES_LIST` caps only the **primary** role, so **every other role the user holds stays active as a secondary role**, ACCOUNTADMIN included.
+
+## The approach
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant E as Entra ID
+    participant A as App backend
+    participant S as Snowflake
+    B->>E: SAML AuthnRequest
+    E->>A: SAML Response (ACS)
+    A->>B: interstitial → /authorize?prompt=none&login_hint=<upn> (+PKCE)
+    B->>E: silent OIDC (existing Entra session, no UI)
+    E->>A: auth code
+    A->>E: code → access + refresh token for the Snowflake resource (role scopes)
+    Note over A: verify id_token UPN == SAML UPN<br/>store tokens encrypted, server-side only
+    B->>A: app request (app JWT)
+    A->>S: SQL API / REST / Cortex Agent<br/>Bearer <user token>, role=APP_ANALYST
+    S-->>A: runs as the user, primary APP_ANALYST, no secondary roles
+```
+
+The recommended design (details in [GUIDE §0](docs/GUIDE.md#0-recommended-design)) has three parts:
+
+1. **A silent OIDC hop chained onto the SAML ACS.** The user sees one login. The backend is a confidential client and holds the refresh token.
+2. **A dedicated v2 resource app with role scopes** (`session:role:APP_ANALYST`, `session:role:APP_READER`):
+   - Entra emits every *consented* scope, so the consent grant is the role allowlist.
+   - With a role-scoped token, Snowflake **disables secondary roles itself** and rejects every other role.
+3. **A second External OAuth integration on the v2 issuer.**
+   - v2 tokens have a different issuer from v1, so this integration can coexist with an existing central Entra integration.
+   - Its `ALLOWED_ROLES_LIST` is the after-the-fact control: **scope broadly in Entra once, enable and revoke roles in Snowflake any time.**
+
+A `role-any` fallback (a v1 integration plus a per-request `USE SECONDARY ROLES NONE` wrapper or a session policy) is also included and demonstrated.
+
+## Screenshots
+
+**1. Sign-in.** One click. The SAML login and the silent OIDC hop run back to back, with no second prompt.
+
+<img src="docs/images/01-login.png" width="360">
+
+**2. The trap: a `role-any` token.** The app asks for `APP_ANALYST`, but 38 secondary roles stay active, including `APP_RESTRICTED` and `ACCOUNTADMIN`, and the PII schema is readable on both REST and the SQL API. Only the `USE SECONDARY ROLES NONE` wrapper closes it.
+
+![role-any leak](docs/images/02-rolecheck-role-any-leak.png)
+
+**3. Recommended: a role-scoped token.** Same user and same request. Snowflake runs with `APP_ANALYST` only: no secondary roles and no PII, on every path, with no wrapper.
+
+![scoped token](docs/images/03-rolecheck-scoped.png)
+
+**4. Snowflake enforces the boundary.** Even with the app's own allowlist bypassed, a role outside the token is rejected by Snowflake (390317).
+
+![restricted role rejected](docs/images/04-rolecheck-restricted-rejected.png)
+
+**5. Cortex Agent as the user.** The agent's SQL tool runs with the user's token: primary role `APP_ANALYST`, no secondary roles, PII denied.
+
+<img src="docs/images/05-agent-chat.png" width="640">
+
+---
+
+## Quick start
+
+**Prerequisites:**
+- an Entra tenant where you can create app registrations and grant admin consent;
+- a Snowflake account with ACCOUNTADMIN;
+- [`az`](https://learn.microsoft.com/cli/azure/), [`snow`](https://docs.snowflake.com/developer-guide/snowflake-cli/index), [`pixi`](https://pixi.sh) and Node.js;
+- a Snowflake user whose `LOGIN_NAME` equals your Entra UPN.
+
+**1. Entra.** This creates the scoped v2 resource app, the role-any v1 resource app and the SAML web app, then assigns you and grants admin consent:
+
+```bash
+az login --tenant <your-tenant>
+./setup/entra_setup.sh                       # env: PREFIX, BASE_URL, ROLES, ENABLE_ROLE_ANY
+```
+
+It writes `setup/entra.env` (IDs) and `setup/.entra_secret` (client secret). Both are gitignored.
+
+**2. Render the Snowflake SQL and the app config:**
+
+```bash
+(cd app && pixi install)
+app/.pixi/envs/default/bin/python setup/render.py \
+    --sf-account <ORG-ACCOUNT> --sf-user <SNOWFLAKE_USER_NAME> --mode scoped   # or role-any
+```
+
+**3. Snowflake.** This creates the roles `APP_ANALYST`, `APP_READER` and `APP_RESTRICTED`, the warehouse `SSO_DEMO_WH`, the database `SSO_DEMO_DB` (an `APP` schema plus a fake-PII `SECRET` schema), both integrations and an unattached session policy:
+
+```bash
+snow sql -c <connection> -f setup/snowflake_setup.sql
+```
+
+> Snowflake allows one integration per issuer. If your account already has an Entra **v1** integration, remove the `ENTRA_SSO_ROLE_ANY_V1` block and use `--mode scoped`.
+
+**4. Run.** This starts Postgres, builds the frontend and serves the backend:
+
+```bash
+app/start.sh                                 # → http://localhost:9000
+```
+
+Click **Sign in with Microsoft (SSO)**, then open **Role Check**. To compare modes, re-run `render.py --mode role-any`, restart, and sign in again.
+
+---
+
+## Key findings
+
+All of these are verified with real tokens; see [GUIDE §9](docs/GUIDE.md#9-validation-checklist).
+
+| Finding | Consequence |
+|---|---|
+| `EXTERNAL_OAUTH_ALLOWED_ROLES_LIST` caps only the **primary** role | With `role-any`, all of the user's roles stay active as secondaries |
+| Role-scoped token (`session:role:<R>`) | Snowflake disables secondaries on SQL API, REST and Cortex Agent; `USE SECONDARY ROLES` is refused (3107) |
+| Entra emits **all consented scopes** for a resource | The admin-consent grant is your Entra-side role allowlist |
+| Scope for a not-yet-existing role | Harmless. The role works once it's created **and** added to the integration allowlist, with no new token |
+| v1 and v2 tokens have different issuers | A second integration is allowed (a same-issuer duplicate gives 003524). v2: `aud` = client-ID GUID, user claim `preferred_username` |
+| SQL API **ignores `X-Snowflake-Role`** | Always send `role` in the request body (REST, MCP and Agent do honour the header) |
+| Multi-statement child-result fetch uses `DEFAULT_ROLE` | Use a single `EXECUTE IMMEDIATE` scripting block for the role-any wrapper |
+| Entra default SAML NameID is opaque | Take the UPN from the `.../claims/name` attribute, otherwise the `prompt=none` hop fails (AADSTS50058) |
+
+## Repository layout
+
+```
+docs/GUIDE.md                     design guide
+docs/images/                      screenshots
+setup/entra_setup.sh              Entra app registrations (idempotent)
+setup/snowflake_setup.sql.tmpl    Snowflake roles, demo data, integrations, session policy
+setup/render.py                   entra.env → snowflake_setup.sql + app/config/config.toml
+app/                              reference app (fork of nanocortex-web-agent)
+  backend/app/api/auth_saml.py           SAML SP + silent OIDC + token hand-off
+  backend/app/services/snowflake_oauth.py token store, refresh, run_sql (role / secondary-role control)
+  backend/app/api/role_test.py           /api/poc/role-check
+  backend/app/services/llm/cortex.py     Cortex Agent as the user
+  frontend/src/pages/RoleCheck.jsx       Role Check page
+```
+
+## Not covered or not yet tested
+
+- Safari, iOS and private-browsing behaviour of the silent hop
+- Conditional Access sign-in frequency
+- End-to-end logout across both sessions (implemented, not fully tested)
+- Production hardening: secret storage, key rotation, HTTPS, multi-instance token store
+
+## Cleanup
+
+```sql
+DROP INTEGRATION IF EXISTS ENTRA_SSO_SCOPED_V2;
+DROP INTEGRATION IF EXISTS ENTRA_SSO_ROLE_ANY_V1;
+DROP DATABASE IF EXISTS SSO_DEMO_DB;
+DROP WAREHOUSE IF EXISTS SSO_DEMO_WH;
+DROP ROLE IF EXISTS APP_ANALYST; DROP ROLE IF EXISTS APP_READER; DROP ROLE IF EXISTS APP_RESTRICTED;
+```
+
+```bash
+for n in "SSO Passthrough Web" "SSO Passthrough Snowflake (scoped)" "SSO Passthrough Snowflake (role-any)"; do
+  az ad app delete --id "$(az ad app list --display-name "$n" --query '[0].appId' -o tsv)"; done
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE). `app/` is derived from [nanocortex-web-agent](https://github.com/sfc-gh-kkeller/nanocortex-web-agent) (MIT).

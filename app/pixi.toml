@@ -1,0 +1,61 @@
+[workspace]
+name = "nanocortex-web-agent"
+version = "0.1.0"
+description = "Open-source AI agent platform with knowledge management workflow, powered by Snowflake Cortex"
+authors = ["Kevin Keller"]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64"]
+
+[dependencies]
+python = ">=3.11,<3.13"
+postgresql = ">=16"
+pgvector = ">=0.8"
+nodejs = ">=20"
+nginx = ">=1.27"
+supervisor = ">=4.2"
+rust = ">=1.95.0,<1.96"
+
+[pypi-dependencies]
+fastapi = ">=0.115"
+uvicorn = { version = ">=0.34", extras = ["standard"] }
+sqlalchemy = { version = ">=2.0", extras = ["asyncio"] }
+asyncpg = ">=0.30"
+alembic = ">=1.14"
+pgvector = ">=0.3"
+pydantic = ">=2.0"
+pydantic-settings = ">=2.0"
+bcrypt = ">=4.0"
+python-jose = { version = ">=3.3", extras = ["cryptography"] }
+httpx = ">=0.28"
+sse-starlette = ">=2.0"
+python-multipart = ">=0.0.18"
+webauthn = ">=2.0"
+pymupdf = ">=1.24"
+aiofiles = ">=24.1"
+pillow = ">=10.0"
+tomli-w = ">=1.0"
+signxml = ">=4.0"
+lxml = ">=5"
+cryptography = ">=42"
+
+[tasks]
+dev-backend = "uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 9000"
+dev-frontend = { cmd = "npx vite --host 0.0.0.0 --port 9001", cwd = "frontend" }
+dev = { depends-on = ["dev-backend", "dev-frontend"] }
+migrate = "alembic -c backend/alembic.ini upgrade head"
+makemigration = "alembic -c backend/alembic.ini revision --autogenerate -m"
+initdb = "python -m backend.app.migrations.init_db"
+test = "python -m pytest backend/tests -v"
+
+[feature.dev.dependencies]
+pytest = ">=8"
+pytest-asyncio = ">=0.24"
+httpx = ">=0.28"
+
+# PoC: zettelkasten-memory sibling repo not available locally; optional env disabled.
+# [feature.zettel.pypi-dependencies]
+# zettelkasten-memory = { path = "../zettelkasten-memory", editable = true }
+
+[environments]
+default = { features = ["dev"], solve-group = "default" }
+# zettel = { features = ["dev", "zettel"], solve-group = "default" }

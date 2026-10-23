@@ -1,0 +1,15 @@
+# secrets & generated config
+setup/.entra_secret
+setup/entra.env
+setup/snowflake_setup.sql
+app/config/config.toml
+# runtime state / builds
+app/.pixi/
+app/.pgdata/
+app/frontend/node_modules/
+app/backend/static/
+app/uploads/
+app/data/
+__pycache__/
+*.pyc
+.DS_Store

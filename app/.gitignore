@@ -1,0 +1,43 @@
+# Runtime config (contains secrets)
+config/config.toml
+.env
+.env.*
+
+# Database
+.pgdata/
+
+# Uploads
+uploads/
+
+# Logs
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pixi/
+
+# Node
+frontend/node_modules/
+
+# Build output
+backend/static/assets/
+
+# OS
+.DS_Store
+._*
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Cortex Code
+.cortex/
+
+# Data
+data/
+
+# SSL certs
+config/ssl/
