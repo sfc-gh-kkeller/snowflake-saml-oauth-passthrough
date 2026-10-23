@@ -332,6 +332,7 @@ async def sso_status(user: User = Depends(get_current_user), db: AsyncSession = 
     try:
         await sfo.get_valid_snowflake_token(db, user.id)
         return {"snowflake_connected": True, "allowed_roles": sfo.allowed_roles(), "token_mode": mode,
+                "agent_identity": settings.sf_oauth_agent_identity,
                 "default_role": settings.sf_oauth_default_role}
     except sfo.SnowflakeTokenMissing as exc:
         return {"snowflake_connected": False, "reason": str(exc), "token_mode": mode}

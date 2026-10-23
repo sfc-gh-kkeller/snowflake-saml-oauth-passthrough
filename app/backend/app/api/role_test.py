@@ -30,10 +30,14 @@ router = APIRouter(prefix="/api/poc", tags=["poc"])
 CONTEXT_SQL = (
     "SELECT CURRENT_USER() AS USER_NAME, CURRENT_ROLE() AS PRIMARY_ROLE, "
     "CURRENT_SECONDARY_ROLES() AS SECONDARY_ROLES, "
-    "IS_ROLE_IN_SESSION('APP_RESTRICTED') AS OTHER_ROLE_ACTIVE"
+    "IS_ROLE_IN_SESSION('APP_RESTRICTED') AS OTHER_ROLE_ACTIVE, "
+    "SYS_CONTEXT('SNOWFLAKE$CURRENT', 'IS_AGENT_ACTIVATED') AS IS_AGENT_ACTIVATED, "
+    "SYS_CONTEXT('SNOWFLAKE$CURRENT', 'AGENT_TYPE') AS AGENT_TYPE"
 )
 PII_SQL = "SELECT COUNT(*) AS N FROM SSO_DEMO_DB.SECRET.CLAIMS_PII"
 APP_SQL = "SELECT COUNT(*) AS N FROM SSO_DEMO_DB.APP.POLICIES"
+# CUSTOMER_EMAIL carries MASK_EMAIL_FROM_AGENTS: clear for humans, masked when agent-activated
+MASKED_SQL = "SELECT CUSTOMER_EMAIL FROM SSO_DEMO_DB.APP.POLICIES ORDER BY ID LIMIT 1"
 
 
 async def _sql_path(token: str, role: str, secondary: str, user: str, enforce: bool) -> dict:
@@ -57,6 +61,12 @@ async def _sql_path(token: str, role: str, secondary: str, user: str, enforce: b
         except sfo.SnowflakeSqlError as exc:
             out[key] = False
             out[f"{key}_error"] = exc.message[:160]
+    try:
+        rows = sfo.rows_as_dicts(await sfo.run_sql(token, MASKED_SQL, role=role, secondary_roles=secondary,
+                                                   user_label=user, enforce_allowlist=enforce))
+        out["agent_masked_sample"] = rows[0].get("CUSTOMER_EMAIL") if rows else None
+    except sfo.SnowflakeSqlError as exc:
+        out["agent_masked_sample_error"] = exc.message[:160]
     return out
 
 
@@ -103,6 +113,7 @@ async def role_check(
         "role": role,
         "user": user.email,
         "app_allowlist": sfo.allowed_roles(),
+        "agent_identity_expected": settings.sf_oauth_agent_identity,
         "paths": {
             "rest_header": await _rest_path(token, role),
             "sql_default": await _sql_path(token, role, "default", user.email, enforce),

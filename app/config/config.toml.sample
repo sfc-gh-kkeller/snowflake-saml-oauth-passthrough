@@ -210,4 +210,7 @@ warehouse = "SSO_DEMO_WH"
 # true  -> wrap queries in USE SECONDARY ROLES NONE (needed for role-any tokens)
 # false -> role-scoped tokens: Snowflake disables secondary roles itself
 disable_secondary_roles = false
+# Mirrors IS_AGENTIC on the Snowflake integration (the integration is what actually marks sessions).
+# true -> sessions are agent-activated: IS_AGENT_ACTIVATED() = TRUE, AGENT_TYPE = EXTERNAL_AGENT
+agent_identity = true
 token_encryption_key = ""               # Fernet key; python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"

@@ -86,6 +86,37 @@ ORDER BY start_time DESC LIMIT 20;
 
 Scoped mode needs none of this.
 
+## Agent identity (on by default)
+
+The integrations are created with **`IS_AGENTIC = TRUE`**, so Snowflake treats every session from this app as an AI agent **acting on behalf of the signed-in user**:
+
+- **Same user and role as before.** `CURRENT_USER()` is still the end user and `CURRENT_ROLE()` is still the scoped role.
+- **Agent flags.** In addition, `SYS_CONTEXT('SNOWFLAKE$CURRENT','IS_AGENT_ACTIVATED')` returns `TRUE`, and the `AGENT_TYPE` is `EXTERNAL_AGENT`.
+- **Agent-aware policies.** Masking, row access, projection, aggregation and join policies can now treat agent access differently from the same person in Snowsight. The demo masks `SSO_DEMO_DB.APP.POLICIES.CUSTOMER_EMAIL`:
+
+```sql
+CREATE MASKING POLICY SSO_DEMO_DB.APP.MASK_EMAIL_FROM_AGENTS AS (val STRING) RETURNS STRING ->
+  CASE WHEN SYS_CONTEXT('SNOWFLAKE$CURRENT','IS_AGENT_ACTIVATED')::BOOLEAN = TRUE THEN '***agent-masked***'
+       ELSE val END;
+```
+
+| Session | User / role | `IS_AGENT_ACTIVATED` | `CUSTOMER_EMAIL` |
+|---|---|---|---|
+| App (SQL API and the agent's SQL tool), `IS_AGENTIC = TRUE` | end user / `APP_ANALYST` | `TRUE` (`EXTERNAL_AGENT`) | `***agent-masked***` |
+| Same app, `IS_AGENTIC = FALSE` | end user / `APP_ANALYST` | `FALSE` | `jane.doe@example.com` |
+| Same user in Snowsight or the CLI | end user | `FALSE` | `jane.doe@example.com` |
+
+**Turning it off:**
+
+- Run `render.py ... --no-agent-identity`. This renders `IS_AGENTIC = FALSE` and writes `agent_identity = false` to the app config.
+- Or flip it live: `ALTER SECURITY INTEGRATION ENTRA_SSO_SCOPED_V2 SET IS_AGENTIC = FALSE;`
+- The change takes effect on the next query, with the same token. No re-login is needed (verified).
+
+**Notes:**
+
+- **The flag covers the whole integration.** Every session from it is marked agentic, including the Role Check page. Use a separate integration on another issuer for non-agent app traffic if you need both.
+- **Audit.** Agent attribution appears in `QUERY_HISTORY.AGENT_TYPE` and `ACCESS_HISTORY.AGENTS_INFO`. You can also cap agent sessions with a Restricted Session Scope (`AGENT_RESTRICTED_SESSION_SCOPE` on a session policy). See [Agent identity](https://docs.snowflake.com/en/user-guide/agent-identity).
+
 ## Screenshots
 
 **1. Sign-in.** One click. The SAML login and the silent OIDC hop run back to back, with no second prompt.
@@ -107,6 +138,14 @@ Scoped mode needs none of this.
 **5. Cortex Agent as the user.** The agent's SQL tool runs with the user's token: primary role `APP_ANALYST`, no secondary roles, PII denied.
 
 <img src="docs/images/05-agent-chat.png" width="640">
+
+**6. Agent identity.** The same user and role, but the session is agent-activated (`EXTERNAL_AGENT`), so the agent-aware masking policy hides `CUSTOMER_EMAIL`.
+
+![agent identity](docs/images/06-agent-identity.png)
+
+**7. The Cortex Agent's own SQL is masked too.** It runs as `APP_ANALYST`, `IS_AGENT_ACTIVATED = true`, `EXTERNAL_AGENT`.
+
+<img src="docs/images/07-agent-chat-masked.png" width="640">
 
 ---
 
@@ -132,7 +171,7 @@ It writes `setup/entra.env` (IDs) and `setup/.entra_secret` (client secret). Bot
 ```bash
 (cd app && pixi install)
 app/.pixi/envs/default/bin/python setup/render.py \
-    --sf-account <ORG-ACCOUNT> --sf-user <SNOWFLAKE_USER_NAME> --mode scoped   # or role-any
+    --sf-account <ORG-ACCOUNT> --sf-user <SNOWFLAKE_USER_NAME> --mode scoped   # or role-any; add --no-agent-identity to opt out
 ```
 
 **3. Snowflake.** This creates the roles `APP_ANALYST`, `APP_READER` and `APP_RESTRICTED`, the warehouse `SSO_DEMO_WH`, the database `SSO_DEMO_DB` (an `APP` schema plus a fake-PII `SECRET` schema), both integrations and an unattached session policy:
@@ -162,6 +201,7 @@ All of these are verified with real tokens; see [GUIDE §9](docs/GUIDE.md#9-vali
 | `EXTERNAL_OAUTH_ALLOWED_ROLES_LIST` caps only the **primary** role | With `role-any`, all of the user's roles stay active as secondaries |
 | Role-scoped token (`session:role:<R>`) | Snowflake disables secondaries on SQL API, REST and Cortex Agent; `USE SECONDARY ROLES` is refused (3107) |
 | Entra emits **all consented scopes** for a resource | The admin-consent grant is your Entra-side role allowlist |
+| `IS_AGENTIC = TRUE` on the External OAuth integration | Same user and role, but `IS_AGENT_ACTIVATED = TRUE` / `EXTERNAL_AGENT`; agent-aware masking applies. Toggling takes effect immediately |
 | Scope for a not-yet-existing role | Harmless. The role works once it's created **and** added to the integration allowlist, with no new token |
 | v1 and v2 tokens have different issuers | A second integration is allowed (a same-issuer duplicate gives 003524). v2: `aud` = client-ID GUID, user claim `preferred_username` |
 | SQL API **ignores `X-Snowflake-Role`** | Always send `role` in the request body (REST, MCP and Agent do honour the header) |

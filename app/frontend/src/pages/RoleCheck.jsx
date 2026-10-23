@@ -39,6 +39,8 @@ function PathRow({ name, r }) {
       <td style="font-family:monospace;font-size:12px;max-width:340px;word-break:break-all;">{r.error ? '' : secondary}</td>
       <td>{yesNo(r.app_table_readable ?? (r.visible_schemas ? r.visible_schemas.includes('APP') : undefined))}</td>
       <td>{yesNo(r.pii_table_readable ?? r.secret_schema_visible)}</td>
+      <td>{r.context ? `${truthy(ctx.IS_AGENT_ACTIVATED) ? 'YES' : 'no'}${ctx.AGENT_TYPE ? ` (${ctx.AGENT_TYPE})` : ''}` : '—'}</td>
+      <td style="font-family:monospace;font-size:12px;">{r.agent_masked_sample ?? (r.agent_masked_sample_error ? 'error' : '—')}</td>
     </tr>
   );
 }
@@ -71,7 +73,8 @@ export function RoleCheck() {
       </p>
       {status && (
         <p>Snowflake session: <strong>{status.snowflake_connected ? 'connected' : `not connected (${status.reason})`}</strong>
-          {status.allowed_roles && <> · app allowlist: <code>{status.allowed_roles.join(', ')}</code></>}</p>
+          {status.allowed_roles && <> · app allowlist: <code>{status.allowed_roles.join(', ')}</code></>}
+          {' '}· agent identity: <strong>{status.agent_identity ? 'on (IS_AGENTIC = TRUE)' : 'off'}</strong></p>
       )}
       <div style="display:flex;gap:12px;align-items:center;margin:16px 0;">
         <select value={role} onChange={e => setRole(e.target.value)}>
@@ -91,7 +94,7 @@ export function RoleCheck() {
         <table style="width:100%;border-collapse:collapse;" cellPadding="6">
           <thead>
             <tr style="text-align:left;border-bottom:1px solid #888;">
-              <th>Path</th><th>Primary role</th><th>Secondary roles / visible</th><th>APP readable</th><th>SECRET (PII) readable</th>
+              <th>Path</th><th>Primary role</th><th>Secondary roles / visible</th><th>APP readable</th><th>SECRET (PII) readable</th><th>Agent activated</th><th>CUSTOMER_EMAIL (agent-masked)</th>
             </tr>
           </thead>
           <tbody>

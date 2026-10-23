@@ -2,10 +2,12 @@
 
 Usage (from repo root):
   pixi run --manifest-path app/pixi.toml python setup/render.py \
-      --sf-account ORG-ACCOUNT --sf-user SNOWFLAKE_USER_NAME [--mode scoped|role-any]
+      --sf-account ORG-ACCOUNT --sf-user SNOWFLAKE_USER_NAME [--mode scoped|role-any] [--no-agent-identity]
 
 --sf-user is the Snowflake user NAME that gets the demo roles; its LOGIN_NAME must equal the Entra UPN.
 --mode picks which token the app requests (default: scoped, the recommended design).
+--no-agent-identity renders IS_AGENTIC = FALSE on the integrations (default TRUE: sessions
+are agent-activated, so agent-aware masking/row policies apply).
 """
 import argparse
 import secrets
@@ -34,6 +36,7 @@ def main():
     p.add_argument("--sf-account", required=True)
     p.add_argument("--sf-user", required=True)
     p.add_argument("--mode", choices=["scoped", "role-any"], default="scoped")
+    p.add_argument("--no-agent-identity", action="store_true")
     a = p.parse_args()
 
     env = load_env(SETUP / "entra.env")
@@ -42,7 +45,8 @@ def main():
 
     sql = (SETUP / "snowflake_setup.sql.tmpl").read_text()
     for k, v in {"TENANT_ID": env["TENANT_ID"], "RES_V2_APP_ID": env["RES_V2_APP_ID"],
-                 "RES_V1_APP_ID": env.get("RES_V1_APP_ID", ""), "SF_LOGIN_USER": a.sf_user}.items():
+                 "RES_V1_APP_ID": env.get("RES_V1_APP_ID", ""), "SF_LOGIN_USER": a.sf_user,
+                 "IS_AGENTIC": "FALSE" if a.no_agent_identity else "TRUE"}.items():
         sql = sql.replace("{{" + k + "}}", v)
     (SETUP / "snowflake_setup.sql").write_text(sql)
 
@@ -73,11 +77,12 @@ def main():
     cfg["snowflake_oauth"] = {
         "enabled": True, "allowed_roles": ",".join(roles), "default_role": roles[0], "warehouse": "SSO_DEMO_WH",
         "disable_secondary_roles": a.mode == "role-any",
+        "agent_identity": not a.no_agent_identity,
         "token_encryption_key": so.get("token_encryption_key") or Fernet.generate_key().decode(),
     }
     cfg_path.write_text(tomli_w.dumps(cfg))
     cfg_path.chmod(0o600)
-    print(f"wrote {SETUP / 'snowflake_setup.sql'} and {cfg_path} (mode={a.mode})")
+    print(f"wrote {SETUP / 'snowflake_setup.sql'} and {cfg_path} (mode={a.mode}, agent_identity={not a.no_agent_identity})")
 
 
 if __name__ == "__main__":

@@ -117,6 +117,7 @@ _FIELD_MAP: dict[str, tuple[str, str]] = {
     "sf_oauth_default_role": ("snowflake_oauth", "default_role"),
     "sf_oauth_warehouse": ("snowflake_oauth", "warehouse"),
     "sf_oauth_disable_secondary_roles": ("snowflake_oauth", "disable_secondary_roles"),
+    "sf_oauth_agent_identity": ("snowflake_oauth", "agent_identity"),
     "token_encryption_key": ("snowflake_oauth", "token_encryption_key"),
     # [openai]
     "openai_api_key": ("openai", "api_key"),
@@ -161,6 +162,7 @@ _FIELD_TYPES: dict[str, type] = {
     "saml_enabled": bool,
     "sf_oauth_enabled": bool,
     "sf_oauth_disable_secondary_roles": bool,
+    "sf_oauth_agent_identity": bool,
 }
 
 # Defaults (used when TOML key is missing)
@@ -248,6 +250,7 @@ _DEFAULTS: dict[str, Any] = {
     "sf_oauth_default_role": "",
     "sf_oauth_warehouse": "",
     "sf_oauth_disable_secondary_roles": True,
+    "sf_oauth_agent_identity": True,
     "token_encryption_key": "",
     "openai_api_key": "",
     "openai_base_url": "https://api.openai.com/v1",
